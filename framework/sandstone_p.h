@@ -120,6 +120,12 @@ int open_memfd(enum MemfdCloexecFlag);
 struct RandomEngineWrapper;
 struct RandomEngineDeleter { void operator()(RandomEngineWrapper *) const; };
 
+enum class RandomEngineType : int8_t {
+    Constant = 0,
+    LCG = 1,
+    AESSequence = 3
+};
+
 enum class TestResult : int8_t {
     Skipped = -1,
     Passed,

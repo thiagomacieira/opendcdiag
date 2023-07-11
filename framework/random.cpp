@@ -70,16 +70,11 @@ struct SeedSequence
 
 // -- the global (not per thread) state --
 
-enum EngineType {
-    Constant = 0,
-    LCG = 1,
-    AESSequence = 3
-};
-static constexpr std::initializer_list<EngineType> engine_types = {
-    Constant,
-    LCG,
+static constexpr std::initializer_list<RandomEngineType> engine_types = {
+    RandomEngineType::Constant,
+    RandomEngineType::LCG,
 #ifdef __AES__
-    AESSequence,
+    RandomEngineType::AESSequence,
 #endif
 };
 
@@ -88,9 +83,9 @@ static constexpr std::initializer_list<EngineType> engine_types = {
 struct RandomEngineWrapper
 {
     std::vector<thread_rng> per_thread;
-    EngineType engine_type;
+    RandomEngineType engine_type;
 
-    RandomEngineWrapper(EngineType type)
+    RandomEngineWrapper(RandomEngineType type)
         : per_thread(num_cpus() + 1), engine_type(type)
     {}
 
@@ -133,7 +128,7 @@ template <typename E> struct EngineWrapper : public RandomEngineWrapper
 {
     using engine_type = E;
 
-    EngineWrapper(EngineType type) : RandomEngineWrapper(type)
+    EngineWrapper(RandomEngineType type) : RandomEngineWrapper(type)
     {
         static_assert(sizeof(engine_type) <= sizeof(thread_rng), "engine is too big");
         static_assert(std::is_trivially_copyable_v<engine_type>,
@@ -374,26 +369,26 @@ template struct EngineWrapper<aes_engine>;
 
 // -- global stuff --
 
-static const char *engineNameFromType(EngineType t)
+static const char *engineNameFromType(RandomEngineType t)
 {
     switch (t) {
-    case Constant:
+    case RandomEngineType::Constant:
         return "Constant:";
-    case LCG:
+    case RandomEngineType::LCG:
         return "LCG:";
-    case AESSequence:
+    case RandomEngineType::AESSequence:
         return "AES:";
     }
     __builtin_unreachable();
     return nullptr;
 }
 
-static EngineType engineFromName(const char *argument)
+static RandomEngineType engineFromName(const char *argument)
 {
     auto starts_with = [=](const char *name) {
         return strncmp(argument, name, strlen(name)) == 0;
     };
-    for (EngineType type : engine_types) {
+    for (RandomEngineType type : engine_types) {
         if (starts_with(engineNameFromType(type)))
             return type;
     }
@@ -414,19 +409,19 @@ static inline int open_random_file(const char *filename)
 
 void random_init_global(const char *seed_from_user)
 {
-    auto make_engine = [](EngineType engine_type) {
+    auto make_engine = [](RandomEngineType engine_type) {
         switch (engine_type) {
-        case Constant:
+        case RandomEngineType::Constant:
             sApp->random_engine.reset(new EngineWrapper<constant_value_engine>(engine_type));
             return;
-        case AESSequence:
+        case RandomEngineType::AESSequence:
 #ifdef __AES__
             sApp->random_engine.reset(new EngineWrapper<aes_engine>(engine_type));
             return;
 #else
             [[fallthrough]];
 #endif
-        case LCG:
+        case RandomEngineType::LCG:
             sApp->random_engine.reset(new EngineWrapper<std::minstd_rand>(engine_type));
             return;
         }
@@ -463,7 +458,8 @@ void random_init_global(const char *seed_from_user)
         SeedSequence sseq(randomdataptr);
 
         // create the engine from the seed
-        EngineType engine_type = randomdata & 0x80 ? LCG : AESSequence; // random bit from ASLR
+        RandomEngineType engine_type = randomdata & 0x80 ?
+                    RandomEngineType::LCG : RandomEngineType::AESSequence; // random bit from ASLR
         make_engine(engine_type);
         sApp->random_engine->seedGlobalEngine(sseq);
 #else
@@ -471,7 +467,7 @@ void random_init_global(const char *seed_from_user)
 #endif
     } else if (fd == -1) {
         // not a file (or does not exist), attempt to parse
-        EngineType engine_type = engineFromName(seed_from_user);
+        RandomEngineType engine_type = engineFromName(seed_from_user);
         make_engine(engine_type);
 
         const char *ptr = strchr(seed_from_user, ':') + 1;
@@ -484,8 +480,9 @@ void random_init_global(const char *seed_from_user)
             perror("read");
             exit(EX_IOERR);
         }
-        static_assert(int(AESSequence) == int(LCG) + 2, "Internal assumption broken");
-        EngineType engine_type = EngineType((type & 2) + int(LCG));
+        static_assert(int(RandomEngineType::AESSequence) == int(RandomEngineType::LCG) + 2,
+                "Internal assumption broken");
+        RandomEngineType engine_type = RandomEngineType((type & 2) + int(RandomEngineType::LCG));
         make_engine(engine_type);
 
         thread_rng buffer;
