@@ -3783,6 +3783,10 @@ int main(int argc, char **argv)
 
     logging_print_header(argc, argv, test_duration(), test_timeout(test_duration()));
 
+    MonotonicTimePoint old_starttime = std::exchange(sApp->starttime, MonotonicTimePoint::clock::now());
+    if (sApp->endtime != MonotonicTimePoint{} && sApp->endtime != MonotonicTimePoint::max())
+        sApp->endtime += sApp->starttime - old_starttime;
+
     // triage process is the best effort to figure out which socket is faulty on
     // a multi-socket system, it's done after the main run and only using the
     // failing tests.
