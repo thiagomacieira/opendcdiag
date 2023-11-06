@@ -61,6 +61,7 @@ jobs:
       if: ${{ matrix.selftests }}
       run: |
         ulimit -St 120
+        export SANDSTONE_MOCK_TOPOLOGY=`bash -x .github/create-fake-topology.sh`
         SANDSTONE_BIN=builddir/opendcdiag bats -t bats/sanity-check
     - name: run tests quickly
       run: |
@@ -120,7 +121,10 @@ jobs:
         wine builddir-windows-cross/opendcdiag.exe --version
         wine builddir-windows-cross/opendcdiag.exe --dump-cpu-info
     - name: run selftests
-      run: SANDSTONE_BIN=builddir-windows-cross/opendcdiag.exe bats -t bats/sanity-check
+      run: |
+        ulimit -St 120
+        export SANDSTONE_MOCK_TOPOLOGY=`bash -x .github/create-fake-topology.sh`
+        SANDSTONE_BIN=builddir-windows-cross/opendcdiag.exe bats -t bats/sanity-check
     - name: run tests quickly
       run: |
         ulimit -St 120
