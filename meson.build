@@ -113,6 +113,7 @@ add_project_link_arguments([
     '-lm',
     '-lssp',
     '-Wl,-Bdynamic',
+    '-lsynchronization',
     '-lshlwapi',
     '-lntdll',
 ], language : [ 'c', 'cpp' ])
