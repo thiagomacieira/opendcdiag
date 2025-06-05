@@ -160,7 +160,7 @@ static void reorder_cpus()
     std::sort(cpu_info, cpu_info + num_cpus(), cpu_compare);
 }
 
-static std::vector<struct cpu_info> create_mock_topology(const char *topo)
+static bool create_mock_topology(const char *topo)
 {
     auto parse_int_and_advance = [&topo](auto *ptr) {
         char *end;
@@ -175,16 +175,18 @@ static std::vector<struct cpu_info> create_mock_topology(const char *topo)
         return true;
     };
 
-    struct cpu_info proto_cpu = { };
-    struct cpu_info *real_cpu = cpu_info;
-    struct cpu_info *const cpu_end = cpu_info + num_cpus();
-    std::fill(std::begin(proto_cpu.cache), std::end(proto_cpu.cache), cache_info{-1, -1});
+    if (!topo || !*topo)
+        return false;
 
-    std::vector<struct cpu_info> mock_cpu_info;
-    while (topo && *topo && real_cpu != cpu_end) {
-        struct cpu_info *info = &mock_cpu_info.emplace_back(proto_cpu);
-        info->cpu_number = real_cpu->cpu_number;
-        ++real_cpu;
+    int cpu_count = 0;
+    while (topo && *topo) {
+        if (cpu_count == sApp->thread_count)
+            break;      // can't add more
+
+        struct cpu_info *info = &cpu_info[cpu_count];
+        ++cpu_count;
+
+        info->package_id = info->module_id = info->core_id = info->thread_id = 0;
 
         // mock cache too (8 kB L1, 32 kB L2, 256 kB L3)
         info->cache[0] = { 0x2000, 0x2000 };
@@ -202,20 +204,8 @@ static std::vector<struct cpu_info> create_mock_topology(const char *topo)
             continue;
     }
 
-    return mock_cpu_info;
-}
-
-static void apply_mock_topology(const std::vector<struct cpu_info> &mock_topology, const LogicalProcessorSet &enabled_cpus)
-{
-    // similar to init_topology_internal()'s loop below
-    int count = sApp->thread_count = std::min<int>(mock_topology.size(), enabled_cpus.count());
-    for (int i = 0, curr_cpu = 0; i < count; ++i, ++curr_cpu) {
-        while (!enabled_cpus.is_set(LogicalProcessor(curr_cpu))) {
-            ++curr_cpu;
-        }
-
-        cpu_info[i] = mock_topology[curr_cpu];
-    }
+    sApp->thread_count = cpu_count;
+    return true;
 }
 
 #ifdef __linux__
@@ -1181,9 +1171,8 @@ static void init_topology_internal(const LogicalProcessorSet &enabled_cpus)
     }
 
     if (SandstoneConfig::Debug) {
-        static auto mock_topology = create_mock_topology(getenv("SANDSTONE_MOCK_TOPOLOGY"));
-        if (mock_topology.size())
-            return apply_mock_topology(mock_topology, enabled_cpus);
+        if (create_mock_topology(getenv("SANDSTONE_MOCK_TOPOLOGY")))
+            return;
     }
 
     auto detect = [](void *ptr) -> void * {
