@@ -40,6 +40,17 @@ private:
     bool detect_via_os(Topology::Thread *info);
     bool detect_numa();
 
+    int last_package_id = -1;
+
+    HardwareInfo::PackageInfo &package_for_id(int id)
+    {
+        // assumes package numbering is sequential
+        auto &package_infos = sApp->hwinfo.package_infos;
+        if (package_infos.size() && package_infos.back().id == id)
+            return package_infos.back();
+        return package_infos.emplace_back(id);
+    }
+
 #ifdef __x86_64__
     enum Domain {
         Invalid = 0,
@@ -62,7 +73,7 @@ private:
 #endif
 
     void detect_family_via_cpuid();
-    bool detect_ppin_via_msr(Topology::Thread *info);
+    bool detect_ppin_via_msr(HardwareInfo::PackageInfo *info, LogicalProcessor lp);
     bool detect_ucode_via_msr(Topology::Thread *info);
 
 #ifdef __linux__
@@ -82,7 +93,7 @@ private:
     }
 
     bool detect_cache_via_os(Topology::Thread *info, int cpufd);
-    bool detect_ppin_via_os(Topology::Thread *info, int cpufd);
+    bool detect_ppin_via_os(HardwareInfo::PackageInfo *info, int cpufd);
     bool detect_topology_via_os(Topology::Thread *info, int cpufd);
     bool detect_ucode_via_os(Topology::Thread *info, int cpufd);
 #elif defined(_WIN32)
@@ -242,13 +253,19 @@ bool TopologyDetector::create_mock_topology(const char *topo)
         info->cache[1] = { 0x8000, 0x8000 };
         info->cache[2] = { 0x40000, 0x40000 };
 
-        if (!parse_int_and_advance(&info->package_id))
-            continue;
-        if (!parse_int_and_advance(&info->core_id)) {
-            info->module_id = info->core_id;
-            continue;
+        bool next = parse_int_and_advance(&info->package_id);
+        if (info->package_id != last_package_id) {
+            package_for_id(info->package_id);
+            last_package_id = info->package_id;
         }
+        if (!next)
+            continue;
+
+        next = parse_int_and_advance(&info->core_id);
         info->module_id = info->core_id;
+        if (!next)
+            continue;
+
         if (!parse_int_and_advance(&info->thread_id))
             continue;
     }
@@ -492,13 +509,10 @@ bool TopologyDetector::detect_via_os(Topology::Thread *info)
     if (!detect_ucode_via_os(info, cpufd))
         detect_ucode_via_msr(info);
 
-    if (info->ppin == 0) {
-        if (info != &cpu_info[0] && info->package_id == info[-1].package_id) {
-            // same package, so just copy
-            info->ppin = info[-1].ppin;
-        } else if (!detect_ppin_via_os(info, cpufd)) {
-            detect_ppin_via_msr(info);
-        }
+    if (info->package_id != last_package_id) {
+        auto &pkginfo = package_for_id(info->package_id);
+        if (!detect_ppin_via_os(&pkginfo, cpufd))
+            detect_ppin_via_msr(&pkginfo, LogicalProcessor(info->cpu_number));
     }
 
     return true;
@@ -892,7 +906,7 @@ bool TopologyDetector::detect_topology_via_cpuid(Topology::Thread *info)
 }
 
 #  if defined(__linux__)
-bool TopologyDetector::detect_ppin_via_os(Topology::Thread *info, int cpufd)
+bool TopologyDetector::detect_ppin_via_os(HardwareInfo::PackageInfo *info, int cpufd)
 {
     if (AutoClosingFile f { fopenat(cpufd, "topology/ppin") }) {
         if (fscanf(f, "%" PRIx64, &info->ppin) > 0)
@@ -1219,6 +1233,7 @@ void TopologyDetector::detect(const LogicalProcessorSet &enabled_cpus)
             pin_to_logical_processor(LogicalProcessor(cpu.cpu_number));
             self->detect_via_cpuid(&cpu);
             self->detect_via_os(&cpu);
+            self->last_package_id = cpu.package_id;
         }
         return nullptr;
     };
@@ -1233,6 +1248,7 @@ void TopologyDetector::detect(const LogicalProcessorSet &enabled_cpus)
         // Use OS-level detection only (no pinning, no threads).
         for (Topology::Thread &cpu : std::span(cpu_info, count)) {
             detect_via_os(&cpu);
+            last_package_id = cpu.package_id;
         }
     }
 

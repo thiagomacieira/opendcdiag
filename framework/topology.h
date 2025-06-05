@@ -52,11 +52,6 @@ public:
 
     std::vector<Package> packages;
 
-    Topology(std::vector<Package> pkgs)
-    {
-        packages = std::move(pkgs);
-    }
-
     bool isValid() const        { return !packages.empty(); }
     std::string build_falure_mask(const struct test *test) const;
 

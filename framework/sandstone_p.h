@@ -306,9 +306,21 @@ protected:
 struct HardwareInfo
 {
     // information for CPUs
+    struct PackageInfo {
+        int id;
+        uint64_t ppin;
+    };
+
+    std::vector<PackageInfo> package_infos;
     uint16_t model = 0;
     uint8_t family = 0;
     uint8_t stepping = 0;
+
+    const PackageInfo *find_package_id(int pkgid) const
+    {
+        auto it = std::ranges::find(package_infos, pkgid, [](const PackageInfo &pi) { return pi.id; });
+        return it == package_infos.cend() ? nullptr : std::to_address(it);
+    }
 };
 
 struct SandstoneApplication : public InterruptMonitor, public test_the_test_data<SandstoneConfig::Debug>
