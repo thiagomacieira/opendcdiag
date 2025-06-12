@@ -4,6 +4,7 @@
 # SPDX-License-Identifier: Apache-2.0
 load ../testenv
 load helpers
+MAX_PROC=`nproc`
 
 @test "crash backtrace multi-slice" {
     # We need GDB and at least two cores
@@ -30,3 +31,56 @@ load helpers
     test_yaml_regexp "/tests/0/threads/3/thread" "1"
 }
 
+@test "no slicing if too few cores per socket" {
+    declare -A yamldump
+
+    export SANDSTONE_MOCK_TOPOLOGY=`seq 0 $MAX_PROC | xargs`
+    echo "SANDSTONE_MOCK_TOPOLOGY=\"$SANDSTONE_MOCK_TOPOLOGY\""
+    sandstone_yq --disable=\*
+
+    local cpus=${yamldump[/cpu-info@len]}
+    local sockets=`query_jq -r '[ ."cpu-info"[].package ] | unique | length'`
+    $is_debug || [[ $sockets = $MAX_PROC ]]
+    [[ $cpus = $MAX_PROC ]]
+
+    if ((cpus / sockets < 8)); then
+        test_yaml_numeric "/test-plans/fullsocket@len" 'value == 1'
+        test_yaml_numeric "/test-plans/heuristic@len" 'value == 1'
+    fi
+}
+
+@test "slicing packages" {
+    declare -A yamldump
+
+    # attempt to run on two sockets
+    export SANDSTONE_MOCK_TOPOLOGY='0 1 0:1 1:1 2 2:1 3 3:1'
+    run $SANDSTONE --cpuset=p1 --dump-cpu-info
+    if [[ $status -ne 0 ]]; then
+        skip "Test only works with Debug builds (to mock the topology) or multi-socket systems"
+    fi
+
+    sandstone_yq --disable=\* --max-cores-per-slice=2
+
+    local sockets=`query_jq -r '[ ."cpu-info"[].package ] | unique | length'`
+    local socket0count=`query_jq -r '[."cpu-info"[] | select(.package == 0)] | length'`
+
+    test_yaml_numeric "/test-plans/fullsocket@len" "value = $sockets"
+    test_yaml_numeric "/test-plans/fullsocket/0/starting_cpu" 'value == 0'
+    test_yaml_numeric "/test-plans/fullsocket/0/count" "value = $socket0count"
+    test_yaml_numeric "/test-plans/fullsocket/1/starting_cpu" "value == $socket0count"
+}
+
+@test "slicing cores" {
+    declare -A yamldump
+
+    # attempt to run on two sockets
+    export SANDSTONE_MOCK_TOPOLOGY='0 0:1 0:2 1'
+    run $SANDSTONE --cpuset=p1 --dump-cpu-info
+    if [[ $status -ne 0 ]]; then
+        skip "Test only works with Debug builds (to mock the topology) w/ 4 CPUs or multi-socket systems"
+    fi
+
+    sandstone_yq --disable=\* --max-cores-per-slice=2 --cpuset=p0,p1
+    test_yaml_numeric "/test-plans/fullsocket@len" 'value == 2'
+    test_yaml_numeric "/test-plans/heuristic@len" 'value == 3'
+}

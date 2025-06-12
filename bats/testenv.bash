@@ -36,6 +36,11 @@ if [[ "$SANDSTONE_BIN" = *.exe ]]; then
 fi
 SANDSTONE="$SANDSTONE --on-crash=core --on-hang=kill"
 
+function setup()
+{
+    outputfile=
+}
+
 function teardown()
 {
     rm -f /tmp/output.yaml /tmp/output.tap
@@ -106,7 +111,11 @@ function run_sandstone_yaml()
         return 1
     fi
 
-    : ${VALIDATION:=1}          # in case it isn't set
+    if [[ -z "$VALIDATION" ]]; then
+        VALIDATION=1
+        declare -p yamldump > /dev/null && VALIDATION=dump
+    fi
+
     if [[ "$VALIDATION" = "dump" ]]; then
         # Load the YAML structure into the $yamldump associative array variable
         declare -p yamldump > /dev/null # errors out if variable is not pre-declared
@@ -114,12 +123,44 @@ function run_sandstone_yaml()
         eval "yamldump=($structure)"
     elif [[ "$VALIDATION" != 0 ]]; then
         python3 $BATS_TEST_COMMONDIR/yamltest.py $outputfile
-        if type -p yq > /dev/null; then
-            yq . $outputfile > /dev/null
-        fi
+    fi
+    if type -p yq > /dev/null; then
+        yq . $outputfile > ${outputfile%.yaml}.json
     fi
     run_sandstone_yaml_post
     status=$sss
+}
+
+function sandstone_yq()
+{
+    type -p yq > /dev/null || skip "yq not installed"
+    run_sandstone_yaml "$@"
+}
+
+function query_jq()
+{
+    local json=${outputfile%.yaml}.json
+    if ! [[ -r $json ]]; then
+        # Maybe not cached yet
+        if ! [[ -f $outputfile ]]; then
+            false "Cannot find output contents. Did you run a query using sandstone_yq?"
+        fi
+        yq . $outputfile > $json
+    fi
+
+    local -a args=()
+    while [[ $# ]]; do
+        if ! [[ "$1" = -* ]]; then
+            break
+        fi
+        args+=($1)
+        shift
+    done
+    if (( $# == 1 )); then
+        jq < $json "${args[@]}" "$@"
+    else
+        jq < $json "${args[@]}" -e "($1) == $2"
+    fi
 }
 
 setup_sandstone
